@@ -8,10 +8,13 @@
 
 import UIKit
 
-class BusinessesViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, FilterViewControllerDelegate {
+class BusinessesViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, FilterViewControllerDelegate, UISearchBarDelegate {
     
   var businesses: [Business]!
-    
+  var searchBar: UISearchBar!
+  var filters: [String : AnyObject]?
+  var term: String = "Restaurant"
+  
   @IBOutlet weak var tableView: UITableView!
   
   override func viewDidLoad() {
@@ -32,7 +35,13 @@ class BusinessesViewController: UIViewController, UITableViewDataSource, UITable
           }
       }
     })
-      
+    
+    searchBar = UISearchBar()
+    searchBar.sizeToFit()
+    searchBar.delegate = self
+    
+    navigationItem.titleView = searchBar
+    
     /* Example of Yelp search with more search options specified
      Business.searchWithTerm("Restaurants", sort: .Distance, categories: ["asianfusion", "burgers"], deals: true) { (businesses: [Business]!, error: NSError!) -> Void in
      self.businesses = businesses
@@ -45,7 +54,26 @@ class BusinessesViewController: UIViewController, UITableViewDataSource, UITable
      */
         
   }
+  
+  func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+    self.term = searchBar.text!
     
+    if let filters = self.filters {
+      searchWithFilters(filters: filters)
+    } else {
+      Business.searchWithTerm(term: term, completion: { (businesses: [Business]?, error: Error?) -> Void in
+        self.businesses = businesses
+        self.tableView.reloadData()
+        if let businesses = businesses {
+          for business in businesses {
+            print(business.name!)
+            print(business.address!)
+          }
+        }
+      })
+    }
+  }
+  
   override func didReceiveMemoryWarning() {
       super.didReceiveMemoryWarning()
       // Dispose of any resources that can be recreated.
@@ -82,12 +110,27 @@ class BusinessesViewController: UIViewController, UITableViewDataSource, UITable
     filterViewController.delegate = self
   }
   
+  
   func filterViewController(filterViewController: FilterViewController, didUpdateFilters filters: [String : AnyObject]) {
-    var categories = filters["categories"] as? [String]
-    Business.searchWithTerm(term: "Restaurants", sort: nil, categories: categories, deals: nil, completion: {
+    searchWithFilters(filters: filters)
+  }
+  
+  func searchWithFilters(filters: [String : AnyObject]) {
+    let categories = filters["categories"] as? [String]
+    let sort = filters["sortby"] as? YelpSortMode
+    let deals = filters["deal"] as? Bool
+    let distance = filters["radius"] as? Float
+    
+    Business.searchWithTerm(term: term, distance: distance, sort: sort, categories: categories, deals: deals, completion: {
       (businesses: [Business]?, error: Error?) -> Void in
-        self.businesses = businesses
-        self.tableView.reloadData()
-      })
+      self.businesses = businesses
+      self.tableView.reloadData()
+      if let businesses = businesses {
+        for business in businesses {
+          print(business.name!)
+          print(business.address!)
+        }
+      }
+    })
   }
 }

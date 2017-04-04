@@ -12,16 +12,29 @@ import UIKit
   @objc optional func filterViewController(filterViewController: FilterViewController, didUpdateFilters filters: [String : AnyObject])
 }
 
-class FilterViewController: UIViewController, UITableViewDelegate, UITableViewDataSource, CategorySwitchCellDelegate, DealSwitchCellDelegate {
+class FilterViewController: UIViewController, UITableViewDelegate, UITableViewDataSource, CategorySwitchCellDelegate, DealSwitchCellDelegate, DistanceSelectionCellDelegate, SortbySelectionCellDelegate {
   
   let numSections = 4
-  let HeaderViewIdentifier = "TableViewHeaderView"
+  let sectionDeal = 0
+  let sectionDistance = 1
+  let sectionSortby = 2
+  let sectionCategory = 3
+  let maxNumCategoriesBeforeExpansion = 4
   
-  var distances: [(String, Float)]!
-  var sortMode: [(String, YelpSortMode)]!
+  let HeaderViewIdentifier = "TableViewHeaderView"
+
   var categories: [[String: String]]!
+  var sortModes = [SortMode]()
+  var distances = [Distance]()
   var switchStates = [Int: Bool]()
+  
+  var distanceSectionExpanded = false
+  var sortbySectionExpanded = false
+  var categoriesSectionExpanded = false
+  
   var dealSwitchState = false
+  var selectedDistance = Float(0)
+  var selectedSortby: YelpSortMode = YelpSortMode.bestMatched
   
   weak var delegate: FilterViewControllerDelegate?
 
@@ -32,10 +45,15 @@ class FilterViewController: UIViewController, UITableViewDelegate, UITableViewDa
     tableView.dataSource = self
     tableView.delegate = self
     tableView.register(UITableViewHeaderFooterView.self, forHeaderFooterViewReuseIdentifier: HeaderViewIdentifier)
+    tableView.estimatedRowHeight = 120
+    tableView.rowHeight = UITableViewAutomaticDimension
     
     categories = yelpCategories()
     distances = yelpDistances()
-    sortMode = yelpSortMode()
+    sortModes = yelpSortMode()
+    
+    tableView.tableFooterView = UIView(frame: CGRect(x: 0, y: 0, width: self.tableView.frame.size.width, height: 1))
+
     
     // Do any additional setup after loading the view.
   }
@@ -55,7 +73,17 @@ class FilterViewController: UIViewController, UITableViewDelegate, UITableViewDa
     var filters = [String : AnyObject]()
     
     // deals
-    if (dealSwitchState)
+    if (dealSwitchState) {
+        filters["deal"] = dealSwitchState as AnyObject
+    }
+    
+    // distance
+    if selectedDistance != 0 {
+      filters["radius"] = selectedDistance as AnyObject
+    }
+    
+    // sort by
+    filters["sortby"] = selectedSortby as AnyObject
     
     // categories
     var selectedCategories = [String]()
@@ -72,32 +100,53 @@ class FilterViewController: UIViewController, UITableViewDelegate, UITableViewDa
   }
   
   func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-    if section == 0 {
+    if section == sectionDeal {
       return 1
-    } else if section == 1 {
-      return distances.count
-    } else if section == 2 {
-      return sortMode.count
+    } else if section == sectionDistance {
+      if distanceSectionExpanded {
+        return distances.count
+      } else {
+        return 1
+      }
+    } else if section == sectionSortby {
+      if sortbySectionExpanded {
+        return sortModes.count
+      } else {
+        return 1
+      }
     }
-    return categories.count
+    
+    if categoriesSectionExpanded {
+      return categories.count
+    } else {
+      return maxNumCategoriesBeforeExpansion
+    }
   }
   
   func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-    if indexPath.section == 0 {
+    if indexPath.section == sectionDeal {
       let cell = tableView.dequeueReusableCell(withIdentifier: "DealSwitchCell", for: indexPath) as! SwitchCell
       cell.dealSwitchCellDelegate = self
       cell.dealSwitchLabel.text = "Offering a deal"
       cell.dealSwitch.isOn = dealSwitchState
       return cell
-    } else if indexPath.section == 1 {
+    } else if indexPath.section == sectionDistance {
       let cell = tableView.dequeueReusableCell(withIdentifier: "DistanceCell", for: indexPath) as! SelectionCell
-      cell.distanceLabel.text = distances[indexPath.row].0
+      cell.distanceLabel.text = distances[indexPath.row].displayName
+      cell.distanceDelegate = self
+      cell.distanceButton.isChecked = distances[indexPath.row].isSelected!
       return cell
-    } else if indexPath.section == 2 {
+    } else if indexPath.section == sectionSortby {
       let cell = tableView.dequeueReusableCell(withIdentifier: "SortbyCell", for: indexPath) as! SelectionCell
-      cell.sortbyLabel.text = sortMode[indexPath.row].0
+      cell.sortbyLabel.text = sortModes[indexPath.row].displayName!
+      cell.sortbyDelegate = self
+      cell.sortbyButton.isChecked = sortModes[indexPath.row].isSelected!
       return cell
     } else {
+      if (!categoriesSectionExpanded && indexPath.row == maxNumCategoriesBeforeExpansion - 1) {
+        return tableView.dequeueReusableCell(withIdentifier: "SeeAllCell", for: indexPath)
+      }
+      
       let cell = tableView.dequeueReusableCell(withIdentifier: "CategorySwitchCell", for: indexPath) as! SwitchCell
       cell.categorySwitchCellDelegate = self
       cell.categorySwitchLabel.text = categories[indexPath.row]["name"]
@@ -107,20 +156,20 @@ class FilterViewController: UIViewController, UITableViewDelegate, UITableViewDa
   }
   
   func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
-    if section == 0 {
+    if section == sectionDeal {
       return nil
     }
     
     let header = tableView.dequeueReusableHeaderFooterView(withIdentifier: HeaderViewIdentifier)! as UITableViewHeaderFooterView
     
     switch section {
-      case 1:
+      case sectionDistance:
         header.textLabel?.text = "Distance"
         break
-      case 2:
+      case sectionSortby:
         header.textLabel?.text = "Sort by"
         break
-      case 3:
+      case sectionCategory:
         header.textLabel?.text = "Categories"
         break
       default:
@@ -137,8 +186,41 @@ class FilterViewController: UIViewController, UITableViewDelegate, UITableViewDa
   }
   
   func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    if indexPath.section == sectionDistance {
+      if distanceSectionExpanded {
+        let cell = tableView.cellForRow(at: indexPath) as! SelectionCell
+        cell.onDistanceButtonClicked(cell.distanceButton)
+        let distance = distances.remove(at: indexPath.row)
+        distance.isSelected = true
+        distances.insert(distance, at: 0)
+        distanceSectionExpanded = false
+      } else {
+        distances.sort {
+          (first, second) -> Bool in
+          return first.meterValue! < second.meterValue!
+        }
+        distanceSectionExpanded = true
+      }
+    } else if indexPath.section == sectionSortby {
+      if sortbySectionExpanded {
+        let cell = tableView.cellForRow(at: indexPath) as! SelectionCell
+        cell.onSortbyButtonClicked(cell.sortbyButton)
+        let sort = sortModes.remove(at: indexPath.row)
+        sort.isSelected = true
+        sortModes.insert(sort, at: 0)
+        sortbySectionExpanded = false
+      } else {
+        sortModes.sort {
+          (first, second) -> Bool in
+          return (first.yelpSortMode?.rawValue)! < second.yelpSortMode!.rawValue
+        }
+        sortbySectionExpanded = true
+      }
+    } else if indexPath.section == sectionCategory && indexPath.row == maxNumCategoriesBeforeExpansion - 1 {
+      categoriesSectionExpanded = true
+    }
     tableView.deselectRow(at: indexPath, animated: true)
-    tableView.reloadRows(at: [indexPath], with: .automatic)
+    tableView.reloadSections(IndexSet(integer: indexPath.section), with: .automatic)
   }
   
   func numberOfSections(in tableView: UITableView) -> Int {
@@ -158,19 +240,41 @@ class FilterViewController: UIViewController, UITableViewDelegate, UITableViewDa
     dealSwitchState = value
     print("value changed for row \(indexPath.row) with value \(value)")
   }
-  
-  func yelpSortMode() -> [(String, YelpSortMode)] {
-    return [("Best Matched", YelpSortMode.bestMatched),
-            ("Distance", YelpSortMode.distance),
-            ("Highest Rated", YelpSortMode.highestRated)]
+    
+  func disdanceSelectionCell(disdanceSelectionCell: SelectionCell, didChangeValue value: Bool) {
+    let indexPath = tableView.indexPath(for: disdanceSelectionCell)! as IndexPath
+    self.selectedDistance = distances[indexPath.row].meterValue!
+    
+    for i in 0..<tableView.numberOfRows(inSection: indexPath.section) {
+      if i != indexPath.row {
+        let cell = self.tableView.cellForRow(at: IndexPath(row: i, section: indexPath.section)) as! SelectionCell
+        distances[i].isSelected = false
+        cell.resetDistanceButton()
+      }
+    }
   }
   
-  func yelpDistances() -> [(String, Float)] {
-    return [("Auto", 0),
-            ("0.3 miles", 482.8),
-            ("1 mile", 1609.34),
-            ("5 miles", 8046.72),
-            ("20 miles", 32186.9)]
+  func sortbySelectionCell(sortbySelectionCell: SelectionCell, didChangeValue value: Bool) {
+    let indexPath = tableView.indexPath(for: sortbySelectionCell)! as IndexPath
+    self.selectedSortby = sortModes[indexPath.row].yelpSortMode!
+    
+    for i in 0..<tableView.numberOfRows(inSection: indexPath.section) {
+      if i != indexPath.row {
+        let cell = self.tableView.cellForRow(at: IndexPath(row: i, section: indexPath.section)) as! SelectionCell
+        cell.resetSortbyButton()
+      }
+    }
+
+  }
+  
+  func yelpSortMode() -> [SortMode] {
+    return [SortMode(displayName: "Best Matched", yelpSortMode: YelpSortMode.bestMatched, isSelected: false),
+            SortMode(displayName: "Distance", yelpSortMode: YelpSortMode.distance, isSelected: false),
+            SortMode(displayName: "Highest Rated", yelpSortMode: YelpSortMode.highestRated, isSelected: false)]
+  }
+  
+  func yelpDistances() -> [Distance] {
+    return [Distance(displayName: "Auto", meterValue: 0, isSelected: false),Distance(displayName: "0.3 miles", meterValue: 482.8, isSelected: false), Distance(displayName: "1 mile", meterValue: 1609.34, isSelected: false),Distance(displayName: "5 miles", meterValue: 8046.72, isSelected: false),Distance(displayName: "20 miles", meterValue: 32186.9, isSelected: false)]
   }
   
   func yelpCategories() -> [[String : String]] {
